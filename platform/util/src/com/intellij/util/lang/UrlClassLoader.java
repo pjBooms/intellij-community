@@ -18,6 +18,7 @@ package com.intellij.util.lang;
 import com.intellij.openapi.application.PathManager;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.util.SystemInfo;
+import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.util.io.win32.IdeaWin32;
 import com.intellij.util.Function;
 import com.intellij.util.containers.ContainerUtil;
@@ -28,6 +29,8 @@ import org.jetbrains.annotations.Nullable;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.net.MalformedURLException;
 import java.net.URL;
@@ -145,6 +148,7 @@ public class UrlClassLoader extends ClassLoader {
   private final ClassPath myClassPath;
   private final WeakStringInterner myClassNameInterner;
   private final boolean myAllowBootstrapResources;
+  private final ClassLoader webClassLoader;
 
   /** @deprecated use {@link #build()}, left for compatibility with java.system.class.loader setting */
   public UrlClassLoader(@NotNull ClassLoader parent) {
@@ -163,6 +167,11 @@ public class UrlClassLoader extends ClassLoader {
     myClassPath = createClassPath(builder);
     myAllowBootstrapResources = builder.myAllowBootstrapResources;
     myClassNameInterner = ourParallel ? new WeakStringInterner() : null;
+    ClassLoader parentCL = getClass().getClassLoader();
+    if (parentCL.getClass().getName().endsWith("UrlClassLoader")) {
+      parentCL = parentCL.getClass().getClassLoader();
+    }
+    webClassLoader = parentCL.getClass().getName().endsWith("WebClassLoader")? parentCL : null;
   }
 
   @NotNull
@@ -196,9 +205,53 @@ public class UrlClassLoader extends ClassLoader {
     return Collections.unmodifiableList(myURLs);
   }
 
+  private Resource getResource(String n, boolean flag) {
+    if (webClassLoader != null) {
+      String pluginId;
+      if (this.getClass().getName().endsWith("PluginClassLoader")) {
+        try {
+          Field field = this.getClass().getDeclaredField("myPluginId");
+          field.setAccessible(true);
+          pluginId = field.get(this).toString();
+        }
+        catch (Exception e) {
+          e.printStackTrace();
+          return null;
+        }
+      } else {
+        pluginId = "IdeaClassLoader";
+      }
+      WebResource resource = new WebResource(pluginId + "/" + n, webClassLoader);
+      if (resource.getURL() == null) {
+        return getClassPath().getResource(n, flag);
+      } else {
+        return resource;
+      }
+    } else {
+      Resource res = getClassPath().getResource(n, flag);
+      if (res != null) {
+        if (this.getClass().getName().endsWith("PluginClassLoader")) {
+          Field field = null;
+          try {
+            field = this.getClass().getDeclaredField("myPluginId");
+            field.setAccessible(true);
+            Object pluginId = field.get(this);
+            //System.out.println(pluginId + " " + n + " " + res);
+          }
+          catch (Exception e) {
+            e.printStackTrace();
+          }
+        } else {
+          //System.out.println("IdeaClassLoader " + n + " " + res);
+        }
+      }
+      return res;
+    }
+  }
+
   @Override
   protected Class findClass(final String name) throws ClassNotFoundException {
-    Resource res = getClassPath().getResource(name.replace('.', '/').concat(CLASS_EXTENSION), false);
+    Resource res = getResource(name.replace('.', '/').concat(CLASS_EXTENSION), false);
     if (res == null) {
       throw new ClassNotFoundException(name);
     }
@@ -213,7 +266,7 @@ public class UrlClassLoader extends ClassLoader {
 
   @Nullable
   protected Class _findClass(@NotNull String name) {
-    Resource res = getClassPath().getResource(name.replace('.', '/').concat(CLASS_EXTENSION), false);
+    Resource res = getResource(name.replace('.', '/').concat(CLASS_EXTENSION), false);
     if (res == null) {
       return null;
     }
@@ -268,11 +321,61 @@ public class UrlClassLoader extends ClassLoader {
     return res != null ? res.getURL() : null;
   }
 
+  private class WebResource extends Resource {
+
+    String name;
+    ClassLoader webClassLoader;
+    Method findResource;
+
+    public WebResource(String name, ClassLoader webClassLoader) {
+      this.name = name;
+      this.webClassLoader = webClassLoader;
+      try {
+        findResource = webClassLoader.getClass().getDeclaredMethod("findResource", String.class);
+      }
+      catch (NoSuchMethodException e) {
+        e.printStackTrace();
+      }
+      findResource.setAccessible(true);
+    }
+
+    @Override
+    public URL getURL() {
+      try {
+        return (URL)findResource.invoke(webClassLoader, name);
+      }
+      catch (Exception e) {
+        e.printStackTrace();
+        return null;
+      }
+    }
+
+    @Override
+    public InputStream getInputStream() throws IOException {
+      return getURL().openStream();
+    }
+
+    @Override
+    public byte[] getBytes() throws IOException {
+      return FileUtil.loadBytes(getInputStream());
+    }
+  }
+
+
+
   @Nullable
   private Resource _getResource(final String name) {
     String n = name;
     if (n.startsWith("/")) n = n.substring(1);
-    return getClassPath().getResource(n, true);
+
+    return getResource(n, true);
+  }
+
+  public URL getLocalResource(final String name) {
+    String n = name;
+    if (n.startsWith("/")) n = n.substring(1);
+    Resource res = getClassPath().getResource(n, true);
+    return res == null ? null : res.getURL();
   }
 
   @Nullable

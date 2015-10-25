@@ -19,6 +19,7 @@ import com.intellij.openapi.util.*;
 import com.intellij.openapi.util.io.FileUtil;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.util.io.URLUtil;
+import com.intellij.util.lang.UrlClassLoader;
 import com.sun.jna.TypeMapper;
 import com.sun.jna.platform.FileUtils;
 import gnu.trove.THashSet;
@@ -33,6 +34,7 @@ import org.jetbrains.annotations.Nullable;
 import org.picocontainer.PicoContainer;
 
 import java.io.*;
+import java.lang.reflect.Method;
 import java.net.URL;
 import java.util.*;
 import java.util.regex.Matcher;
@@ -279,7 +281,34 @@ public class PathManager {
     if (url == null) {
       url = ClassLoader.getSystemResource(path.substring(1));
     }
-    return url != null ? extractRoot(url, path) : null;
+    if (url != null) {
+      if (url.getProtocol().equals("java")) {
+        ClassLoader cl = context.getClassLoader();
+        Method getLocalResource = null;
+        try {
+          Class clazz = cl.getClass();
+          if (clazz.getName().endsWith("PluginClassLoader")) {
+            clazz = clazz.getSuperclass();
+          }
+          getLocalResource = clazz.getDeclaredMethod("getLocalResource", String.class);
+          getLocalResource.setAccessible(true);
+          url = (URL)getLocalResource.invoke(cl, path);
+        }
+        catch (Exception e) {
+          e.printStackTrace();
+          return null;
+        }
+      }
+    }
+    if (url == null) {
+      System.out.println("URL not found for path: " + path + " Context: " + context.getName());
+    }
+    String res = url != null ? extractRoot(url, path) : null;
+    System.out.println("JAR needed: " + res);
+    //if (res.endsWith("idea.jar")) {
+      new Exception().printStackTrace();
+    //}
+    return res;
   }
 
   /**

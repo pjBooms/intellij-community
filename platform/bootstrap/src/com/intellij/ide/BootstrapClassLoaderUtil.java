@@ -98,8 +98,10 @@ public class BootstrapClassLoaderUtil extends ClassUtilCore {
 
   private static void addIDEALibraries(Collection<URL> classpath) throws MalformedURLException {
     Class<BootstrapClassLoaderUtil> aClass = BootstrapClassLoaderUtil.class;
-    String selfRoot = PathManager.getResourceRoot(aClass, "/" + aClass.getName().replace('.', '/') + ".class");
+//    String selfRoot = "/C:/work/kit/github/Java-ReStart/apps/IdeaCE/bootstrap";//PathManager.getResourceRoot(aClass, "/" + aClass.getName().replace('.', '/') + ".class");
+    String selfRoot = "/Users/lipskynikita/Java-ReStart/apps/Idea/bootstrap";//PathManager.getResourceRoot(aClass, "/" + aClass.getName().replace('.', '/') + ".class");
     assert selfRoot != null;
+    System.out.println(selfRoot);
     URL selfRootUrl = new File(selfRoot).getAbsoluteFile().toURI().toURL();
     classpath.add(selfRootUrl);
 
